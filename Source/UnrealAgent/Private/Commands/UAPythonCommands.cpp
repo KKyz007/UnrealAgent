@@ -218,13 +218,14 @@ bool UAPythonCommands::ExecuteResetContext(
 	// We keep __builtins__ intact so Python still works
 	FPythonCommandEx PythonCommand;
 	PythonCommand.Command = TEXT(
-		"import sys as _sys\n"
-		"_keep = {'__builtins__', '__name__', '__doc__', '__package__', '__loader__', '__spec__', '_sys'}\n"
-		"_g = globals()\n"
-		"_to_del = [k for k in _g if k not in _keep]\n"
-		"for _k in _to_del:\n"
-		"    del _g[_k]\n"
-		"del _keep, _g, _to_del, _k, _sys\n"
+		"_ua_keep = {'__builtins__', '__name__', '__doc__', '__package__', '__loader__', '__spec__', '_ua_keep'}\n"
+		"_ua_to_del = [k for k in list(globals().keys()) if k not in _ua_keep]\n"
+		"for _ua_k in _ua_to_del:\n"
+		"    try:\n"
+		"        del globals()[_ua_k]\n"
+		"    except KeyError:\n"
+		"        pass\n"
+		"del _ua_keep, _ua_to_del\n"
 		"print('Python context reset')\n"
 	);
 	PythonCommand.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
