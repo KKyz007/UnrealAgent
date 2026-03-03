@@ -25,5 +25,10 @@ public class UnrealAgent : ModuleRules
 			"ToolMenus",         // UToolMenus
 			"DeveloperSettings", // UDeveloperSettings
 		});
+
+		// PythonScriptPlugin: header-only include (runtime optional via IPythonScriptPlugin::Get())
+		PrivateIncludePathModuleNames.AddRange(new string[] {
+			"PythonScriptPlugin",
+		});
 	}
 }

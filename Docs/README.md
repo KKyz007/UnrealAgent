@@ -21,7 +21,7 @@ UE Plugin (C++ Editor Module)
 Unreal Editor API
 ```
 
-### Available Tools (15)
+### Available Tools (17)
 
 | Group | Tool | Description |
 |-------|------|-------------|
@@ -40,6 +40,8 @@ Unreal Editor API
 | Viewport | `get_viewport_camera` | Camera position and rotation |
 | Viewport | `move_viewport_camera` | Set camera position/rotation |
 | Viewport | `focus_on_actor` | Focus viewport on specific actor |
+| Python | `execute_python` | Execute arbitrary Python code in UE Editor context |
+| Python | `reset_python_context` | Reset shared Python execution context |
 
 ## Installation
 

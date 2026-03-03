@@ -20,6 +20,12 @@ __pycache__/
 dist/
 build/
 
+# UnrealAgent runtime data
+Cache/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Obsidian
+.obsidian/

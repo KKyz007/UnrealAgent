@@ -7,6 +7,7 @@
 #include "Commands/UAWorldCommands.h"
 #include "Commands/UAActorCommands.h"
 #include "Commands/UAViewportCommands.h"
+#include "Commands/UAPythonCommands.h"
 #include "UnrealAgent.h"
 
 UACommandRegistry::UACommandRegistry()
@@ -17,6 +18,7 @@ UACommandRegistry::UACommandRegistry()
 	RegisterCommand(MakeShared<UAWorldCommands>());
 	RegisterCommand(MakeShared<UAActorCommands>());
 	RegisterCommand(MakeShared<UAViewportCommands>());
+	RegisterCommand(MakeShared<UAPythonCommands>());
 }
 
 void UACommandRegistry::RegisterCommand(TSharedPtr<UACommandBase> Command)
