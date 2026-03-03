@@ -1,0 +1,19 @@
+"""Entry point for the UnrealAgent MCP Server."""
+
+import asyncio
+import os
+import sys
+
+
+def main():
+    """Run the MCP server."""
+    from .server import mcp
+
+    # Import tools to register them
+    from .tools import project, assets, world, actors, viewport  # noqa: F401
+
+    mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

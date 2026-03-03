@@ -1,0 +1,25 @@
+# Unreal Engine generated files
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.sln
+*.suo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db

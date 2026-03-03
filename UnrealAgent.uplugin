@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "UnrealAgent",
+	"Description": "AI Agent control interface for Unreal Editor via MCP protocol",
+	"Category": "KuoYu",
+	"CreatedBy": "KuoYu",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "UnrealAgent",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}
