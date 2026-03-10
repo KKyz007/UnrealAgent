@@ -13,6 +13,7 @@
 #include "Misc/Paths.h"
 #include "Misc/ObjectThumbnail.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
+#include "ObjectTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Subsystems/AssetEditorSubsystem.h"
