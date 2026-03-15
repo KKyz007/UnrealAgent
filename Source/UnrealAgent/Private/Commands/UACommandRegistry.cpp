@@ -16,6 +16,7 @@
 #include "Commands/UAAssetManageCommands.h"
 #include "Commands/UAScreenshotCommands.h"
 #include "Commands/UAEventCommands.h"
+#include "Commands/UAWidgetCommands.h"
 #include "UnrealAgent.h"
 
 UACommandRegistry::UACommandRegistry()
@@ -35,6 +36,7 @@ UACommandRegistry::UACommandRegistry()
 	RegisterCommand(MakeShared<UAAssetManageCommands>());
 	RegisterCommand(MakeShared<UAScreenshotCommands>());
 	RegisterCommand(MakeShared<UAEventCommands>());
+	RegisterCommand(MakeShared<UAWidgetCommands>());
 }
 
 void UACommandRegistry::RegisterCommand(TSharedPtr<UACommandBase> Command)

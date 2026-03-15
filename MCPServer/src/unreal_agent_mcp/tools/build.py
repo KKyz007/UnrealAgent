@@ -57,12 +57,17 @@ _PROGRESS_PATTERN = re.compile(r"\[(\d+)/(\d+)\]")
 def _validate_engine_dir(path: str) -> bool:
     """验证引擎目录包含必要的可执行文件。"""
     engine_subdir = os.path.join(path, "Engine")
-    # 有些安装方式引擎根目录本身包含 Engine 子目录，有些直接就是 Engine
     if os.path.isdir(engine_subdir):
         check_base = engine_subdir
     else:
         check_base = path
 
+    if platform.system() == "Darwin":
+        return (
+            os.path.isfile(os.path.join(check_base, "Build", "BatchFiles", "Mac", "Build.sh"))
+            or os.path.isdir(os.path.join(check_base, "Binaries", "Mac", "UnrealEditor.app"))
+            or os.path.isfile(os.path.join(check_base, "Binaries", "Mac", "UnrealEditor"))
+        )
     return (
         os.path.isfile(os.path.join(check_base, "Build", "BatchFiles", "Build.bat"))
         or os.path.isfile(os.path.join(check_base, "Binaries", "Win64", "UnrealEditor.exe"))
@@ -116,10 +121,19 @@ def find_engine_path(uproject_path: str) -> str | None:
 
     # 策略 3: 常见安装路径扫描
     if engine_version:
-        for drive in "CDEFGHI":
-            candidate = f"{drive}:/Program Files/Epic Games/UE_{engine_version}"
-            if _validate_engine_dir(candidate):
-                return candidate
+        if platform.system() == "Darwin":
+            mac_candidates = [
+                f"/Users/Shared/Epic Games/UE_{engine_version}",
+                os.path.expanduser(f"~/Library/Epic Games/UE_{engine_version}"),
+            ]
+            for candidate in mac_candidates:
+                if _validate_engine_dir(candidate):
+                    return candidate
+        else:
+            for drive in "CDEFGHI":
+                candidate = f"{drive}:/Program Files/Epic Games/UE_{engine_version}"
+                if _validate_engine_dir(candidate):
+                    return candidate
 
     return None
 
@@ -265,23 +279,37 @@ async def build_project(
         }
 
     engine_dir = _get_engine_subdir(engine_path)
-
-    # 验证 Build.bat 存在
-    build_bat = os.path.join(engine_dir, "Build", "BatchFiles", "Build.bat")
-    if not os.path.isfile(build_bat):
-        return {"error": f"找不到编译脚本: {build_bat}"}
-
-    # 构造编译命令
     project_name = _extract_project_name(uproject_path)
-    cmd = [
-        build_bat,
-        f"{project_name}Editor",
-        platform_name,
-        configuration,
-        f"-Project={uproject_path}",
-        "-WaitMutex",
-        "-FromMsBuild",
-    ]
+
+    if platform.system() == "Darwin":
+        if platform_name == "Win64":
+            platform_name = "Mac"
+        build_sh = os.path.join(engine_dir, "Build", "BatchFiles", "Mac", "Build.sh")
+        if not os.path.isfile(build_sh):
+            return {"error": f"找不到编译脚本: {build_sh}"}
+        cmd = [
+            "/bin/bash", build_sh,
+            f"{project_name}Editor",
+            platform_name,
+            configuration,
+            f"-Project={uproject_path}",
+            "-WaitMutex",
+            "-FromMsBuild",
+        ]
+    else:
+        build_bat = os.path.join(engine_dir, "Build", "BatchFiles", "Build.bat")
+        if not os.path.isfile(build_bat):
+            return {"error": f"找不到编译脚本: {build_bat}"}
+        cmd = [
+            build_bat,
+            f"{project_name}Editor",
+            platform_name,
+            configuration,
+            f"-Project={uproject_path}",
+            "-WaitMutex",
+            "-FromMsBuild",
+        ]
+
     if clean:
         cmd.append("-Clean")
 
@@ -454,7 +482,13 @@ async def launch_editor(
     engine_dir = _get_engine_subdir(engine_path)
 
     # 验证编辑器可执行文件
-    editor_exe = os.path.join(engine_dir, "Binaries", "Win64", "UnrealEditor.exe")
+    if platform.system() == "Darwin":
+        editor_exe = os.path.join(engine_dir, "Binaries", "Mac", "UnrealEditor.app",
+                                  "Contents", "MacOS", "UnrealEditor")
+        if not os.path.isfile(editor_exe):
+            editor_exe = os.path.join(engine_dir, "Binaries", "Mac", "UnrealEditor")
+    else:
+        editor_exe = os.path.join(engine_dir, "Binaries", "Win64", "UnrealEditor.exe")
     if not os.path.isfile(editor_exe):
         return {"error": f"找不到编辑器可执行文件: {editor_exe}"}
 

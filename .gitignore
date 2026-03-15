@@ -8,6 +8,7 @@ Saved/
 .vs/
 .vscode/
 .idea/
+.cursor/
 *.sln
 *.suo
 

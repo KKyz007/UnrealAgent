@@ -12,6 +12,8 @@
 #include "Factories/BlueprintFactory.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Engine/Blueprint.h"
+#include "Blueprint/UserWidget.h"
+#include "WidgetBlueprint.h"
 #include "ObjectTools.h"
 #include "PackageTools.h"
 #include "Misc/Paths.h"
@@ -82,11 +84,11 @@ TSharedPtr<FJsonObject> UAAssetManageCommands::GetToolSchema(const FString& Meth
 	if (MethodName == TEXT("create_asset"))
 	{
 		return MakeToolSchema(TEXT("create_asset"),
-			TEXT("创建新资产。支持的 asset_class: Material, MaterialInstance, Blueprint"),
+			TEXT("创建新资产。支持的 asset_class: Material, MaterialInstance, Blueprint, WidgetBlueprint"),
 			MakeInputSchema({
 				{TEXT("asset_name"), MakeProp(TEXT("string"), TEXT("资产名称"))},
 				{TEXT("package_path"), MakeProp(TEXT("string"), TEXT("包路径，如 /Game/Materials"))},
-				{TEXT("asset_class"), MakeProp(TEXT("string"), TEXT("资产类型: Material, MaterialInstance, Blueprint"))},
+				{TEXT("asset_class"), MakeProp(TEXT("string"), TEXT("资产类型: Material, MaterialInstance, Blueprint, WidgetBlueprint"))},
 				{TEXT("parent_material"), MakeProp(TEXT("string"), TEXT("MaterialInstance 的父材质路径"))},
 				{TEXT("parent_class"), MakeProp(TEXT("string"), TEXT("Blueprint 的父类名（如 Actor, Character, Pawn），默认 Actor"))},
 			}, {TEXT("asset_name"), TEXT("package_path"), TEXT("asset_class")}));
@@ -225,9 +227,16 @@ bool UAAssetManageCommands::ExecuteCreateAsset(
 		Factory = BPFactory;
 		CreatedAsset = AssetTools.CreateAsset(AssetName, PackagePath, UBlueprint::StaticClass(), Factory);
 	}
+	else if (AssetClass == TEXT("WidgetBlueprint"))
+	{
+		UBlueprintFactory* BPFactory = NewObject<UBlueprintFactory>();
+		BPFactory->ParentClass = UUserWidget::StaticClass();
+		Factory = BPFactory;
+		CreatedAsset = AssetTools.CreateAsset(AssetName, PackagePath, UWidgetBlueprint::StaticClass(), Factory);
+	}
 	else
 	{
-		OutError = FString::Printf(TEXT("Unsupported asset_class: %s. Supported: Material, MaterialInstance, Blueprint"), *AssetClass);
+		OutError = FString::Printf(TEXT("Unsupported asset_class: %s. Supported: Material, MaterialInstance, Blueprint, WidgetBlueprint"), *AssetClass);
 		return false;
 	}
 

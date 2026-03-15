@@ -35,6 +35,8 @@ public class UnrealAgent : ModuleRules
 			"ImageWrapper",      // IImageWrapper, PNG 编码 (UAScreenshotCommands)
 			"RenderCore",        // FlushRenderingCommands (UAScreenshotCommands)
 			"RHI",               // FReadSurfaceDataFlags (UAScreenshotCommands)
+			"UMG",               // UUserWidget, UWidgetTree, UWidget (UAWidgetCommands)
+			"UMGEditor",         // UWidgetBlueprint (UAWidgetCommands)
 		});
 
 		// PythonScriptPlugin: header-only include (runtime optional via IPythonScriptPlugin::Get())

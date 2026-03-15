@@ -89,24 +89,38 @@ class UnrealConnection:
                 await self.disconnect()
                 raise ConnectionError(f"Failed to send request: {e}")
 
-            # Read response with Content-Length framing
-            try:
-                response_data = await self._read_response()
-            except (ConnectionError, OSError, asyncio.IncompleteReadError) as e:
-                await self.disconnect()
-                raise ConnectionError(f"Failed to read response: {e}")
+            # Read response with Content-Length framing.
+            # Discard stale responses (mismatched id) that may linger in the
+            # TCP buffer after a cancelled asyncio.wait_for() timeout.
+            max_stale = 10
+            for _ in range(max_stale):
+                try:
+                    response_data = await self._read_response()
+                except (ConnectionError, OSError, asyncio.IncompleteReadError) as e:
+                    await self.disconnect()
+                    raise ConnectionError(f"Failed to read response: {e}")
 
-            response = json.loads(response_data)
+                response = json.loads(response_data)
 
-            # Check for errors
-            if "error" in response:
-                error = response["error"]
-                raise RuntimeError(
-                    f"UnrealAgent error [{error.get('code', 'unknown')}]: "
-                    f"{error.get('message', 'Unknown error')}"
-                )
+                resp_id = response.get("id")
+                if resp_id != self._request_id:
+                    logger.warning(
+                        f"Discarding stale response (id={resp_id}, expected={self._request_id})"
+                    )
+                    continue
 
-            return response.get("result", {})
+                if "error" in response:
+                    error = response["error"]
+                    raise RuntimeError(
+                        f"UnrealAgent error [{error.get('code', 'unknown')}]: "
+                        f"{error.get('message', 'Unknown error')}"
+                    )
+
+                return response.get("result", {})
+
+            raise RuntimeError(
+                f"Failed to receive matching response after discarding {max_stale} stale messages"
+            )
 
     async def _read_response(self) -> bytes:
         """Read a Content-Length framed response."""
