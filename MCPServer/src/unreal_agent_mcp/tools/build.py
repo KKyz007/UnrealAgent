@@ -18,6 +18,44 @@ from ..server import mcp, connection
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# 自动推断 .uproject 路径
+# ---------------------------------------------------------------------------
+
+def _auto_detect_uproject() -> str | None:
+    """从 MCP Server 所在的插件目录往上查找 .uproject 文件。
+
+    插件位于 <ProjectRoot>/Plugins/UnrealAgent/MCPServer/，
+    所以从 MCPServer 目录往上逐级扫描 *.uproject。
+    也支持环境变量 UNREAL_PROJECT_PATH 直接指定。
+    """
+    env_path = os.environ.get("UNREAL_PROJECT_PATH")
+    if env_path and os.path.isfile(env_path) and env_path.endswith(".uproject"):
+        return env_path
+
+    # 从当前文件位置往上查找
+    current = Path(__file__).resolve().parent  # tools/
+    for _ in range(8):
+        current = current.parent
+        uproject_files = list(current.glob("*.uproject"))
+        if uproject_files:
+            return str(uproject_files[0])
+        if current == current.parent:
+            break
+    return None
+
+
+def _resolve_uproject(uproject_path: str) -> str | None:
+    """解析 uproject 路径：有值直接用，空字符串则自动推断。"""
+    if uproject_path:
+        return uproject_path
+    detected = _auto_detect_uproject()
+    if detected:
+        logger.info(f"自动检测到项目: {detected}")
+    return detected
+
+
 # ---------------------------------------------------------------------------
 # 全局编译状态（MCP Server 进程级单例）
 # ---------------------------------------------------------------------------
@@ -236,7 +274,7 @@ async def _run_build_process(cmd: list[str]) -> None:
 
 @mcp.tool()
 async def build_project(
-    uproject_path: str,
+    uproject_path: str = "",
     configuration: str = "Development",
     platform_name: str = "Win64",
     clean: bool = False,
@@ -247,7 +285,7 @@ async def build_project(
     不需要 UE 编辑器运行。
 
     Args:
-        uproject_path: .uproject 文件的完整路径（如 I:/Aura/Aura.uproject）。
+        uproject_path: .uproject 文件的完整路径。留空自动从插件目录推断。
         configuration: 编译配置：Development（默认）、DebugGame、Shipping。
         platform_name: 目标平台，默认 Win64。
         clean: 是否执行 Clean Build。
@@ -261,6 +299,11 @@ async def build_project(
             "message": "编译正在进行中，请使用 get_build_status 查看进度",
             "progress_pct": _build_state["progress_pct"],
         }
+
+    # 自动推断 uproject 路径
+    uproject_path = _resolve_uproject(uproject_path)
+    if not uproject_path:
+        return {"error": "无法自动检测 .uproject 路径，请手动指定或设置 UNREAL_PROJECT_PATH 环境变量"}
 
     # 验证 .uproject
     err = _validate_uproject(uproject_path)
@@ -427,16 +470,17 @@ def _spawn_editor_process(editor_exe: str, uproject_path: str) -> None:
 
 @mcp.tool()
 async def launch_editor(
-    uproject_path: str,
+    uproject_path: str = "",
     wait_for_connection: bool = True,
     timeout_seconds: float = 300.0,
 ) -> dict:
-    """启动 UE 编辑器并加载项目。
+    """直接启动 UE 编辑器并加载项目。
 
     不需要 UE 编辑器已在运行。如果编辑器已在运行，会直接返回当前状态。
+    如需断点调试，请改用 build_project() 编译后在 Rider 中手动点击 Debug 启动。
 
     Args:
-        uproject_path: .uproject 文件的完整路径。
+        uproject_path: .uproject 文件的完整路径。留空自动从插件目录推断。
         wait_for_connection: 是否等待编辑器 TCP 连接就绪（默认 True）。
         timeout_seconds: 等待连接就绪的超时时间（默认 300 秒）。
     """
@@ -449,6 +493,11 @@ async def launch_editor(
                 time.time() - _editor_state["start_time"], 1
             )
         return dict(_editor_state)
+
+    # 自动推断 uproject 路径
+    uproject_path = _resolve_uproject(uproject_path)
+    if not uproject_path:
+        return {"error": "无法自动检测 .uproject 路径，请手动指定或设置 UNREAL_PROJECT_PATH 环境变量"}
 
     # 验证 .uproject
     err = _validate_uproject(uproject_path)
@@ -481,7 +530,6 @@ async def launch_editor(
 
     engine_dir = _get_engine_subdir(engine_path)
 
-    # 验证编辑器可执行文件
     if platform.system() == "Darwin":
         editor_exe = os.path.join(engine_dir, "Binaries", "Mac", "UnrealEditor.app",
                                   "Contents", "MacOS", "UnrealEditor")
@@ -492,7 +540,6 @@ async def launch_editor(
     if not os.path.isfile(editor_exe):
         return {"error": f"找不到编辑器可执行文件: {editor_exe}"}
 
-    # 启动编辑器进程
     logger.info(f"启动编辑器: {editor_exe} {uproject_path}")
     try:
         _spawn_editor_process(editor_exe, uproject_path)
@@ -510,10 +557,9 @@ async def launch_editor(
     }
 
     if wait_for_connection:
-        # 后台等待 TCP 连接就绪（非阻塞）
         asyncio.create_task(_wait_for_editor_tcp(timeout_seconds))
         _editor_state["message"] = (
-            "编辑器进程已启动，正在后台等待 TCP 连接就绪。"
+            f"{launch_message}，正在后台等待 TCP 连接就绪。"
             "请通过 get_build_status 轮询状态。"
         )
 
@@ -549,7 +595,6 @@ async def _build_then_launch_task(
         logger.warning("build_and_launch: 编译等待超时")
         return
 
-    # 编译成功，启动编辑器
     logger.info("build_and_launch: 编译成功，开始启动编辑器")
     await launch_editor(
         uproject_path=uproject_path,
@@ -559,28 +604,32 @@ async def _build_then_launch_task(
 
 @mcp.tool()
 async def build_and_launch(
-    uproject_path: str,
+    uproject_path: str = "",
     configuration: str = "Development",
     skip_build: bool = False,
 ) -> dict:
-    """编译项目并启动编辑器（一条龙）。
+    """编译项目并直接启动编辑器（一条龙）。
 
-    完整流程：编译 → 等待完成 → 启动编辑器 → 等待 TCP 就绪。
+    完整流程：编译 → 等待完成 → 直接启动编辑器 → 等待 TCP 就绪。
     全程非阻塞，立即返回，通过 get_build_status 轮询进度。
-    不需要 UE 编辑器已在运行。
+    如需断点调试，请改用 build_project() 编译后在 Rider 中手动 Debug。
 
     Args:
-        uproject_path: .uproject 文件的完整路径。
+        uproject_path: .uproject 文件的完整路径。留空自动从插件目录推断。
         configuration: 编译配置，默认 Development。
         skip_build: 跳过编译直接启动（如果已经编译过）。
     """
+    # 自动推断 uproject 路径
+    uproject_path = _resolve_uproject(uproject_path)
+    if not uproject_path:
+        return {"error": "无法自动检测 .uproject 路径，请手动指定或设置 UNREAL_PROJECT_PATH 环境变量"}
+
     # 验证 .uproject
     err = _validate_uproject(uproject_path)
     if err:
         return {"error": err}
 
     if skip_build:
-        # 直接启动编辑器（非阻塞）
         launch_result = await launch_editor(
             uproject_path=uproject_path,
             wait_for_connection=True,
@@ -592,14 +641,12 @@ async def build_and_launch(
             "editor": launch_result,
         }
 
-    # 先检查是否已在编译
     if _build_state["status"] == "building":
         return {
             "status": "already_building",
             "message": "编译正在进行中，请通过 get_build_status 查看进度",
         }
 
-    # 启动编译（非阻塞）
     build_result = await build_project(
         uproject_path=uproject_path,
         configuration=configuration,
@@ -607,13 +654,12 @@ async def build_and_launch(
     if "error" in build_result:
         return {"status": "build_failed", "error": build_result["error"]}
 
-    # 后台任务：等待编译完成后自动启动编辑器
     asyncio.create_task(_build_then_launch_task(uproject_path))
 
     return {
         "status": "building",
         "message": (
-            "编译已启动，编译完成后将自动启动编辑器。"
+            "编译已启动，编译完成后将直接启动编辑器。"
             "请通过 get_build_status 轮询编译和编辑器状态。"
         ),
         "build": {
@@ -621,4 +667,26 @@ async def build_and_launch(
             "target": _build_state.get("current_target", ""),
         },
         "editor": {"status": "pending", "message": "等待编译完成后启动"},
+    }
+
+
+@mcp.tool()
+async def detect_environment() -> dict:
+    """检测当前开发环境配置。
+
+    自动检测 .uproject 路径、UE 引擎路径。
+    用于排查环境问题或确认零配置是否生效。
+    """
+    uproject = _auto_detect_uproject()
+    engine = find_engine_path(uproject) if uproject else None
+
+    return {
+        "uproject_path": uproject or "(未检测到，请设置 UNREAL_PROJECT_PATH)",
+        "project_name": Path(uproject).stem if uproject else None,
+        "engine_path": engine or "(未检测到，请设置 UNREAL_ENGINE_PATH)",
+        "platform": platform.system(),
+        "env_overrides": {
+            "UNREAL_PROJECT_PATH": os.environ.get("UNREAL_PROJECT_PATH", "(未设置)"),
+            "UNREAL_ENGINE_PATH": os.environ.get("UNREAL_ENGINE_PATH", "(未设置)"),
+        },
     }
