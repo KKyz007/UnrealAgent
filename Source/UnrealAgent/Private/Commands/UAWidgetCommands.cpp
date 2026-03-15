@@ -7,6 +7,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Widget.h"
 #include "Components/PanelWidget.h"
+#include "Components/PanelSlot.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/VerticalBox.h"
@@ -32,6 +33,7 @@
 #include "Components/Spacer.h"
 #include "Components/RichTextBlock.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "UObject/UObjectGlobals.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUAWidget, Log, All);
 
@@ -414,20 +416,28 @@ bool UAWidgetCommands::ExecuteAddWidget(
 		return false;
 	}
 
-	// Generate name if empty
+	// Generate a unique name — check both widget names and UObject names under WidgetTree
 	if (WidgetName.IsEmpty())
 	{
 		WidgetName = WidgetType + TEXT("_0");
 		int32 Counter = 1;
-		while (FindWidgetByName(WidgetBP, WidgetName, OutError) != nullptr)
+		FString Unused;
+		while (FindWidgetByName(WidgetBP, WidgetName, Unused) != nullptr
+			|| StaticFindObjectFast(nullptr, Tree, FName(*WidgetName)) != nullptr)
 		{
-			OutError.Empty();
 			WidgetName = FString::Printf(TEXT("%s_%d"), *WidgetType, Counter++);
 		}
-		OutError.Empty();
+	}
+	else
+	{
+		// User-specified name: check for UObject-level collision
+		if (StaticFindObjectFast(nullptr, Tree, FName(*WidgetName)) != nullptr)
+		{
+			OutError = FString::Printf(TEXT("Name '%s' already exists in the WidgetTree"), *WidgetName);
+			return false;
+		}
 	}
 
-	// Determine parent
 	UPanelWidget* ParentPanel = nullptr;
 	if (!ParentName.IsEmpty())
 	{
@@ -441,6 +451,9 @@ bool UAWidgetCommands::ExecuteAddWidget(
 			return false;
 		}
 	}
+
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("Agent: Add Widget %s"), *WidgetType)));
 
 	WidgetBP->Modify();
 
@@ -457,6 +470,7 @@ bool UAWidgetCommands::ExecuteAddWidget(
 		if (!Slot)
 		{
 			OutError = FString::Printf(TEXT("Failed to add widget to parent '%s'"), *ParentName);
+			Tree->RemoveWidget(NewWidget);
 			return false;
 		}
 	}
@@ -464,7 +478,6 @@ bool UAWidgetCommands::ExecuteAddWidget(
 	{
 		if (Tree->RootWidget != nullptr)
 		{
-			// Root already exists; if it's a Panel, add as child; otherwise error
 			UPanelWidget* RootPanel = Cast<UPanelWidget>(Tree->RootWidget);
 			if (RootPanel)
 			{
@@ -512,14 +525,27 @@ bool UAWidgetCommands::ExecuteRemoveWidget(
 	UWidget* Widget = FindWidgetByName(WidgetBP, WidgetName, OutError);
 	if (!Widget) return false;
 
-	WidgetBP->Modify();
-
 	UWidgetTree* Tree = WidgetBP->WidgetTree;
+	if (!Tree)
+	{
+		OutError = TEXT("Widget Blueprint has no WidgetTree");
+		return false;
+	}
+
 	bool bIsRoot = (Tree->RootWidget == Widget);
+
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("Agent: Remove Widget %s"), *WidgetName)));
+
+	WidgetBP->Modify();
 
 	if (bIsRoot)
 	{
 		Tree->RootWidget = nullptr;
+	}
+	else if (Widget->Slot && Widget->Slot->Parent)
+	{
+		Widget->Slot->Parent->RemoveChild(Widget);
 	}
 
 	Tree->RemoveWidget(Widget);
@@ -572,63 +598,82 @@ bool UAWidgetCommands::ExecuteSetWidgetProperty(
 	UWidget* Widget = FindWidgetByName(WidgetBP, WidgetName, OutError);
 	if (!Widget) return false;
 
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("Agent: Set %s.%s"), *WidgetName, *PropName)));
+
 	WidgetBP->Modify();
 	Widget->Modify();
 
 	bool bHandled = false;
+	FProperty* ChangedProp = nullptr;
 
 	// -- Slot properties (slot_ prefix) --
 	if (PropName.StartsWith(TEXT("slot_")))
 	{
-		UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot);
-		if (!CanvasSlot)
+		UPanelSlot* BaseSlot = Widget->Slot;
+		if (!BaseSlot)
 		{
-			OutError = FString::Printf(TEXT("Widget '%s' does not have a CanvasPanelSlot (parent might not be a CanvasPanel)"), *WidgetName);
+			OutError = FString::Printf(TEXT("Widget '%s' has no Slot (not parented)"), *WidgetName);
 			return false;
 		}
 
+		UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(BaseSlot);
+
 		double NumValue = FCString::Atod(*PropValue);
 
-		if (PropName == TEXT("slot_offset_left"))        { auto O = CanvasSlot->GetOffsets(); O.Left = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
-		else if (PropName == TEXT("slot_offset_top"))     { auto O = CanvasSlot->GetOffsets(); O.Top = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
-		else if (PropName == TEXT("slot_offset_right"))   { auto O = CanvasSlot->GetOffsets(); O.Right = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
-		else if (PropName == TEXT("slot_offset_bottom"))  { auto O = CanvasSlot->GetOffsets(); O.Bottom = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
-		else if (PropName == TEXT("slot_size_x"))         { auto S = CanvasSlot->GetSize(); S.X = NumValue; CanvasSlot->SetSize(S); bHandled = true; }
-		else if (PropName == TEXT("slot_size_y"))         { auto S = CanvasSlot->GetSize(); S.Y = NumValue; CanvasSlot->SetSize(S); bHandled = true; }
-		else if (PropName == TEXT("slot_anchor_min_x"))   { auto A = CanvasSlot->GetAnchors(); A.Minimum.X = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
-		else if (PropName == TEXT("slot_anchor_min_y"))   { auto A = CanvasSlot->GetAnchors(); A.Minimum.Y = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
-		else if (PropName == TEXT("slot_anchor_max_x"))   { auto A = CanvasSlot->GetAnchors(); A.Maximum.X = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
-		else if (PropName == TEXT("slot_anchor_max_y"))   { auto A = CanvasSlot->GetAnchors(); A.Maximum.Y = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
-		else if (PropName == TEXT("slot_alignment_x"))    { auto Al = CanvasSlot->GetAlignment(); Al.X = NumValue; CanvasSlot->SetAlignment(Al); bHandled = true; }
-		else if (PropName == TEXT("slot_alignment_y"))    { auto Al = CanvasSlot->GetAlignment(); Al.Y = NumValue; CanvasSlot->SetAlignment(Al); bHandled = true; }
-		else if (PropName == TEXT("slot_auto_size"))      { CanvasSlot->SetAutoSize(PropValue.ToBool()); bHandled = true; }
-		else if (PropName == TEXT("slot_h_align"))
+		if (CanvasSlot)
 		{
-			// HAlign only applies to certain slot types (VerticalBoxSlot, OverlaySlot, etc.)
-			if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(Widget->Slot))      { VSlot->SetHorizontalAlignment(ParseHAlign(PropValue)); bHandled = true; }
-			else if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Widget->Slot))          { OSlot->SetHorizontalAlignment(ParseHAlign(PropValue)); bHandled = true; }
-			else if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(Widget->Slot)) { HSlot->SetHorizontalAlignment(ParseHAlign(PropValue)); bHandled = true; }
+			CanvasSlot->Modify();
+
+			if (PropName == TEXT("slot_offset_left"))        { auto O = CanvasSlot->GetOffsets(); O.Left = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
+			else if (PropName == TEXT("slot_offset_top"))     { auto O = CanvasSlot->GetOffsets(); O.Top = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
+			else if (PropName == TEXT("slot_offset_right"))   { auto O = CanvasSlot->GetOffsets(); O.Right = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
+			else if (PropName == TEXT("slot_offset_bottom"))  { auto O = CanvasSlot->GetOffsets(); O.Bottom = NumValue; CanvasSlot->SetOffsets(O); bHandled = true; }
+			else if (PropName == TEXT("slot_size_x"))         { auto S = CanvasSlot->GetSize(); S.X = NumValue; CanvasSlot->SetSize(S); bHandled = true; }
+			else if (PropName == TEXT("slot_size_y"))         { auto S = CanvasSlot->GetSize(); S.Y = NumValue; CanvasSlot->SetSize(S); bHandled = true; }
+			else if (PropName == TEXT("slot_anchor_min_x"))   { auto A = CanvasSlot->GetAnchors(); A.Minimum.X = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
+			else if (PropName == TEXT("slot_anchor_min_y"))   { auto A = CanvasSlot->GetAnchors(); A.Minimum.Y = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
+			else if (PropName == TEXT("slot_anchor_max_x"))   { auto A = CanvasSlot->GetAnchors(); A.Maximum.X = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
+			else if (PropName == TEXT("slot_anchor_max_y"))   { auto A = CanvasSlot->GetAnchors(); A.Maximum.Y = NumValue; CanvasSlot->SetAnchors(A); bHandled = true; }
+			else if (PropName == TEXT("slot_alignment_x"))    { auto Al = CanvasSlot->GetAlignment(); Al.X = NumValue; CanvasSlot->SetAlignment(Al); bHandled = true; }
+			else if (PropName == TEXT("slot_alignment_y"))    { auto Al = CanvasSlot->GetAlignment(); Al.Y = NumValue; CanvasSlot->SetAlignment(Al); bHandled = true; }
+			else if (PropName == TEXT("slot_auto_size"))      { CanvasSlot->SetAutoSize(PropValue.ToBool()); bHandled = true; }
 		}
-		else if (PropName == TEXT("slot_v_align"))
+
+		if (!bHandled && PropName == TEXT("slot_h_align"))
 		{
-			if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(Widget->Slot))      { VSlot->SetVerticalAlignment(ParseVAlign(PropValue)); bHandled = true; }
-			else if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Widget->Slot))          { OSlot->SetVerticalAlignment(ParseVAlign(PropValue)); bHandled = true; }
-			else if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(Widget->Slot)) { HSlot->SetVerticalAlignment(ParseVAlign(PropValue)); bHandled = true; }
+			BaseSlot->Modify();
+			if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(BaseSlot))          { VSlot->SetHorizontalAlignment(ParseHAlign(PropValue)); bHandled = true; }
+			else if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(BaseSlot))              { OSlot->SetHorizontalAlignment(ParseHAlign(PropValue)); bHandled = true; }
+			else if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(BaseSlot))  { HSlot->SetHorizontalAlignment(ParseHAlign(PropValue)); bHandled = true; }
+		}
+		else if (!bHandled && PropName == TEXT("slot_v_align"))
+		{
+			BaseSlot->Modify();
+			if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(BaseSlot))          { VSlot->SetVerticalAlignment(ParseVAlign(PropValue)); bHandled = true; }
+			else if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(BaseSlot))              { OSlot->SetVerticalAlignment(ParseVAlign(PropValue)); bHandled = true; }
+			else if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(BaseSlot))  { HSlot->SetVerticalAlignment(ParseVAlign(PropValue)); bHandled = true; }
+		}
+
+		if (!bHandled && PropName.StartsWith(TEXT("slot_")))
+		{
+			OutError = FString::Printf(TEXT("Slot property '%s' not supported for slot type '%s'"),
+				*PropName, *BaseSlot->GetClass()->GetName());
+			return false;
 		}
 	}
 
 	// -- Common widget properties --
 	if (!bHandled && PropName == TEXT("Text"))
 	{
-		if (UTextBlock* TB = Cast<UTextBlock>(Widget))    { TB->SetText(FText::FromString(PropValue)); bHandled = true; }
-		else if (UButton* Btn = Cast<UButton>(Widget))     { /* Button has no text directly */ }
+		if (UTextBlock* TB = Cast<UTextBlock>(Widget)) { TB->SetText(FText::FromString(PropValue)); bHandled = true; }
 	}
 	if (!bHandled && PropName == TEXT("Visibility"))
 	{
 		ESlateVisibility V = ESlateVisibility::Visible;
-		if (PropValue == TEXT("Hidden"))           V = ESlateVisibility::Hidden;
-		else if (PropValue == TEXT("Collapsed"))   V = ESlateVisibility::Collapsed;
-		else if (PropValue == TEXT("HitTestInvisible")) V = ESlateVisibility::HitTestInvisible;
+		if (PropValue == TEXT("Hidden"))                    V = ESlateVisibility::Hidden;
+		else if (PropValue == TEXT("Collapsed"))            V = ESlateVisibility::Collapsed;
+		else if (PropValue == TEXT("HitTestInvisible"))     V = ESlateVisibility::HitTestInvisible;
 		else if (PropValue == TEXT("SelfHitTestInvisible")) V = ESlateVisibility::SelfHitTestInvisible;
 		Widget->SetVisibility(V);
 		bHandled = true;
@@ -652,11 +697,11 @@ bool UAWidgetCommands::ExecuteSetWidgetProperty(
 	// -- Fallback: UE property reflection --
 	if (!bHandled)
 	{
-		FProperty* Prop = Widget->GetClass()->FindPropertyByName(FName(*PropName));
-		if (Prop)
+		ChangedProp = Widget->GetClass()->FindPropertyByName(FName(*PropName));
+		if (ChangedProp)
 		{
-			void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Widget);
-			if (Prop->ImportText_Direct(*PropValue, ValuePtr, Widget, PPF_None))
+			void* ValuePtr = ChangedProp->ContainerPtrToValuePtr<void>(Widget);
+			if (ChangedProp->ImportText_Direct(*PropValue, ValuePtr, Widget, PPF_None))
 			{
 				bHandled = true;
 			}
@@ -674,7 +719,13 @@ bool UAWidgetCommands::ExecuteSetWidgetProperty(
 		return false;
 	}
 
-	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+	if (ChangedProp)
+	{
+		FPropertyChangedEvent ChangedEvent(ChangedProp);
+		Widget->PostEditChangeProperty(ChangedEvent);
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
 
 	OutResult = MakeShared<FJsonObject>();
 	OutResult->SetBoolField(TEXT("success"), true);
@@ -704,47 +755,66 @@ bool UAWidgetCommands::ExecuteMoveWidget(
 	UWidget* Widget = FindWidgetByName(WidgetBP, WidgetName, OutError);
 	if (!Widget) return false;
 
-	WidgetBP->Modify();
 	UWidgetTree* Tree = WidgetBP->WidgetTree;
-
-	// Remove from current parent
-	if (Widget->Slot && Widget->Slot->Parent)
+	if (!Tree)
 	{
-		Widget->Slot->Parent->RemoveChild(Widget);
+		OutError = TEXT("Widget Blueprint has no WidgetTree");
+		return false;
 	}
 
-	if (NewParentName.IsEmpty())
-	{
-		if (Tree->RootWidget && Tree->RootWidget != Widget)
-		{
-			UPanelWidget* RootPanel = Cast<UPanelWidget>(Tree->RootWidget);
-			if (RootPanel)
-			{
-				RootPanel->AddChild(Widget);
-			}
-			else
-			{
-				OutError = TEXT("Root is not a PanelWidget, cannot add child. Specify a parent_name.");
-				return false;
-			}
-		}
-		else
-		{
-			Tree->RootWidget = Widget;
-		}
-	}
-	else
+	// Resolve target parent before modifying anything
+	UPanelWidget* NewParentPanel = nullptr;
+	if (!NewParentName.IsEmpty())
 	{
 		UWidget* NewParent = FindWidgetByName(WidgetBP, NewParentName, OutError);
 		if (!NewParent) return false;
 
-		UPanelWidget* NewParentPanel = Cast<UPanelWidget>(NewParent);
+		NewParentPanel = Cast<UPanelWidget>(NewParent);
 		if (!NewParentPanel)
 		{
 			OutError = FString::Printf(TEXT("'%s' is not a PanelWidget, cannot contain children"), *NewParentName);
 			return false;
 		}
+	}
+
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("Agent: Move Widget %s"), *WidgetName)));
+
+	WidgetBP->Modify();
+
+	bool bWasRoot = (Tree->RootWidget == Widget);
+
+	// Detach from current parent
+	if (Widget->Slot && Widget->Slot->Parent)
+	{
+		Widget->Slot->Parent->RemoveChild(Widget);
+	}
+	if (bWasRoot)
+	{
+		Tree->RootWidget = nullptr;
+	}
+
+	// Attach to new parent
+	if (NewParentPanel)
+	{
 		NewParentPanel->AddChild(Widget);
+	}
+	else if (Tree->RootWidget && Tree->RootWidget != Widget)
+	{
+		UPanelWidget* RootPanel = Cast<UPanelWidget>(Tree->RootWidget);
+		if (RootPanel)
+		{
+			RootPanel->AddChild(Widget);
+		}
+		else
+		{
+			OutError = TEXT("Root is not a PanelWidget, cannot add child. Specify a parent_name.");
+			return false;
+		}
+	}
+	else
+	{
+		Tree->RootWidget = Widget;
 	}
 
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
