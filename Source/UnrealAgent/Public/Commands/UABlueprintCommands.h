@@ -4,18 +4,21 @@
 
 #include "Commands/UACommandBase.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogUABlueprint, Log, All);
+
 /**
  * 蓝图编辑命令组 — 镜像 UAMaterialCommands 的设计模式。
  * 提供蓝图节点图的查询、节点创建/删除、引脚连接/断开、变量/函数管理、编译等功能。
  *
  * 支持的方法:
  *   查询:
- *     - get_blueprint_overview:    蓝图概览（图列表、变量、事件等）
- *     - get_blueprint_graph:       节点图详情（节点+连接）
- *     - get_blueprint_variables:   变量定义列表
- *     - get_blueprint_functions:   函数签名列表
+ *     - get_blueprint_overview:       蓝图概览（图列表、变量、事件等）
+ *     - get_blueprint_graph:          节点图详情（节点+连接）
+ *     - get_blueprint_variables:      变量定义列表
+ *     - get_blueprint_functions:      函数签名列表
+ *     - list_overridable_events:      可覆写事件列表（BlueprintImplementableEvent）
  *   操作:
- *     - add_node:             添加蓝图节点
+ *     - add_node:             添加蓝图节点（含 Event 覆写、MacroInstance）
  *     - delete_node:          删除蓝图节点
  *     - connect_pins:         连接蓝图引脚
  *     - disconnect_pin:       断开蓝图引脚
@@ -41,6 +44,7 @@ private:
 	bool ExecuteGetBlueprintGraph(const TSharedPtr<FJsonObject>& Params, TSharedPtr<FJsonObject>& OutResult, FString& OutError);
 	bool ExecuteGetBlueprintVariables(const TSharedPtr<FJsonObject>& Params, TSharedPtr<FJsonObject>& OutResult, FString& OutError);
 	bool ExecuteGetBlueprintFunctions(const TSharedPtr<FJsonObject>& Params, TSharedPtr<FJsonObject>& OutResult, FString& OutError);
+	bool ExecuteListOverridableEvents(const TSharedPtr<FJsonObject>& Params, TSharedPtr<FJsonObject>& OutResult, FString& OutError);
 
 	// ========== 节点操作 ==========
 	bool ExecuteAddNode(const TSharedPtr<FJsonObject>& Params, TSharedPtr<FJsonObject>& OutResult, FString& OutError);

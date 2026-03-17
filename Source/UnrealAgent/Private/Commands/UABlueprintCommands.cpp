@@ -22,7 +22,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/CompilerResultsLog.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogUABlueprint, Log, All);
+DEFINE_LOG_CATEGORY(LogUABlueprint);
 
 // ==================== Schema Helpers ====================
 
@@ -71,6 +71,7 @@ TArray<FString> UABlueprintCommands::GetSupportedMethods() const
 		TEXT("add_variable"),
 		TEXT("add_function"),
 		TEXT("compile_blueprint"),
+		TEXT("list_overridable_events"),
 	};
 }
 
@@ -199,6 +200,15 @@ TSharedPtr<FJsonObject> UABlueprintCommands::GetToolSchema(const FString& Method
 				{TEXT("asset_path")}
 			));
 	}
+	if (MethodName == TEXT("list_overridable_events"))
+	{
+		return MakeToolSchema(TEXT("list_overridable_events"),
+			TEXT("列出蓝图中所有可覆写的事件（BlueprintImplementableEvent），包括父类和接口中的事件。返回每个事件的名称、所属类、参数列表、是否已实现。配合 add_node(node_class='Event') 使用。"),
+			MakeInputSchema(
+				{{TEXT("asset_path"), MakeProp(TEXT("string"), TEXT("蓝图资产路径"))}},
+				{TEXT("asset_path")}
+			));
+	}
 
 	return nullptr;
 }
@@ -222,6 +232,7 @@ bool UABlueprintCommands::Execute(
 	if (MethodName == TEXT("add_variable"))              return ExecuteAddVariable(Params, OutResult, OutError);
 	if (MethodName == TEXT("add_function"))              return ExecuteAddFunction(Params, OutResult, OutError);
 	if (MethodName == TEXT("compile_blueprint"))         return ExecuteCompileBlueprint(Params, OutResult, OutError);
+	if (MethodName == TEXT("list_overridable_events"))   return ExecuteListOverridableEvents(Params, OutResult, OutError);
 
 	OutError = FString::Printf(TEXT("Unknown method: %s"), *MethodName);
 	return false;

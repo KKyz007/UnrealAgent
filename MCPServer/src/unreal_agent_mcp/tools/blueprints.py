@@ -238,3 +238,16 @@ async def compile_blueprint(asset_path: str) -> dict:
         asset_path: 蓝图资产路径
     """
     return await connection.send_request("compile_blueprint", {"asset_path": asset_path})
+
+
+@mcp.tool()
+async def list_overridable_events(asset_path: str) -> dict:
+    """列出蓝图中所有可覆写的事件（BlueprintImplementableEvent）。
+
+    返回父类和接口中的可覆写事件列表，包括每个事件的名称、所属类、
+    参数列表、是否已实现。配合 add_node(node_class='Event') 使用。
+
+    Args:
+        asset_path: 蓝图资产路径
+    """
+    return await connection.send_request("list_overridable_events", {"asset_path": asset_path})

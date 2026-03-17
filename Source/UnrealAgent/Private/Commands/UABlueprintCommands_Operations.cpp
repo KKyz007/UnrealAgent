@@ -25,6 +25,7 @@
 #include "Kismet/KismetStringLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Actor.h"
+#include "UObject/UnrealType.h"
 
 
 // ==================== add_node ====================
@@ -184,9 +185,95 @@ bool UABlueprintCommands::ExecuteAddNode(
 		VarSetNode->AllocateDefaultPins();
 		NewNode = VarSetNode;
 	}
+	else if (NodeClass == TEXT("Event"))
+	{
+		FString EventName;
+		if (!Params->TryGetStringField(TEXT("event_name"), EventName))
+		{
+			OutError = TEXT("Event requires 'event_name'");
+			return false;
+		}
+
+		UFunction* Function = nullptr;
+		if (BP->ParentClass)
+		{
+			Function = BP->ParentClass->FindFunctionByName(FName(*EventName));
+		}
+		if (!Function)
+		{
+			for (const FBPInterfaceDescription& IntDesc : BP->ImplementedInterfaces)
+			{
+				if (IntDesc.Interface)
+				{
+					Function = IntDesc.Interface->FindFunctionByName(FName(*EventName));
+					if (Function) break;
+				}
+			}
+		}
+
+		if (!Function)
+		{
+			OutError = FString::Printf(TEXT("Event '%s' not found in parent class '%s' or implemented interfaces"),
+				*EventName, BP->ParentClass ? *BP->ParentClass->GetName() : TEXT("None"));
+			return false;
+		}
+
+		// Check if event is already implemented in this graph
+		for (UEdGraphNode* ExistingNode : Graph->Nodes)
+		{
+			if (UK2Node_Event* ExistingEvent = Cast<UK2Node_Event>(ExistingNode))
+			{
+				if (ExistingEvent->EventReference.GetMemberName() == FName(*EventName))
+				{
+					OutError = FString::Printf(TEXT("Event '%s' is already implemented in graph '%s'"),
+						*EventName, *Graph->GetName());
+					return false;
+				}
+			}
+		}
+
+		UK2Node_Event* EventNode = NewObject<UK2Node_Event>(Graph);
+		EventNode->EventReference.SetExternalMember(FName(*EventName), Function->GetOwnerClass());
+		EventNode->bOverrideFunction = true;
+		EventNode->NodePosX = PosX;
+		EventNode->NodePosY = PosY;
+		Graph->AddNode(EventNode, true, false);
+		EventNode->AllocateDefaultPins();
+		NewNode = EventNode;
+	}
+	else if (NodeClass == TEXT("MacroInstance"))
+	{
+		FString MacroPath;
+		if (!Params->TryGetStringField(TEXT("macro_path"), MacroPath))
+		{
+			OutError = TEXT("MacroInstance requires 'macro_path'");
+			return false;
+		}
+
+		UBlueprint* MacroBP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *MacroPath));
+		if (!MacroBP)
+		{
+			OutError = FString::Printf(TEXT("Macro blueprint not found: %s"), *MacroPath);
+			return false;
+		}
+
+		if (MacroBP->MacroGraphs.Num() == 0)
+		{
+			OutError = FString::Printf(TEXT("No macro graphs found in: %s"), *MacroPath);
+			return false;
+		}
+
+		UK2Node_MacroInstance* MacroNode = NewObject<UK2Node_MacroInstance>(Graph);
+		MacroNode->SetMacroGraph(MacroBP->MacroGraphs[0]);
+		MacroNode->NodePosX = PosX;
+		MacroNode->NodePosY = PosY;
+		Graph->AddNode(MacroNode, true, false);
+		MacroNode->AllocateDefaultPins();
+		NewNode = MacroNode;
+	}
 	else
 	{
-		OutError = FString::Printf(TEXT("Unsupported node_class: %s. Supported: CallFunction, CustomEvent, IfThenElse, VariableGet, VariableSet"), *NodeClass);
+		OutError = FString::Printf(TEXT("Unsupported node_class: %s. Supported: CallFunction, Event, CustomEvent, IfThenElse, VariableGet, VariableSet, MacroInstance"), *NodeClass);
 		return false;
 	}
 
@@ -763,5 +850,101 @@ bool UABlueprintCommands::ExecuteCompileBlueprint(
 
 	UE_LOG(LogUABlueprint, Log, TEXT("compile_blueprint: %s — %s (%d errors, %d warnings)"),
 		*BP->GetName(), *StatusStr, ErrorArr.Num(), WarningArr.Num());
+	return true;
+}
+
+// ==================== list_overridable_events ====================
+
+bool UABlueprintCommands::ExecuteListOverridableEvents(
+	const TSharedPtr<FJsonObject>& Params,
+	TSharedPtr<FJsonObject>& OutResult,
+	FString& OutError)
+{
+	FString AssetPath;
+	if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath)) { OutError = TEXT("'asset_path' is required"); return false; }
+
+	UBlueprint* BP = LoadBlueprintFromPath(AssetPath, OutError);
+	if (!BP) return false;
+
+	// Collect already-implemented event names from EventGraph
+	TSet<FName> ImplementedEvents;
+	TArray<UEdGraph*> AllGraphs;
+	BP->GetAllGraphs(AllGraphs);
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		if (!Graph) continue;
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+			{
+				ImplementedEvents.Add(EventNode->EventReference.GetMemberName());
+			}
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> EventArr;
+	TSet<FName> SeenFunctions;
+
+	auto CollectFromClass = [&](UClass* SourceClass, const FString& SourceLabel)
+	{
+		if (!SourceClass) return;
+		for (TFieldIterator<UFunction> It(SourceClass, EFieldIteratorFlags::IncludeSuper); It; ++It)
+		{
+			UFunction* Func = *It;
+			if (!Func) continue;
+			if (!(Func->FunctionFlags & FUNC_BlueprintEvent)) continue;
+			if (SeenFunctions.Contains(Func->GetFName())) continue;
+			SeenFunctions.Add(Func->GetFName());
+
+			auto EventObj = MakeShared<FJsonObject>();
+			EventObj->SetStringField(TEXT("name"), Func->GetName());
+			EventObj->SetStringField(TEXT("owner_class"), Func->GetOwnerClass()->GetName());
+			EventObj->SetStringField(TEXT("source"), SourceLabel);
+			EventObj->SetBoolField(TEXT("is_implemented"), ImplementedEvents.Contains(Func->GetFName()));
+
+			// Collect parameters
+			TArray<TSharedPtr<FJsonValue>> ParamArr;
+			for (TFieldIterator<FProperty> PropIt(Func); PropIt; ++PropIt)
+			{
+				FProperty* Prop = *PropIt;
+				if (!Prop || (Prop->PropertyFlags & CPF_ReturnParm)) continue;
+				auto ParamObj = MakeShared<FJsonObject>();
+				ParamObj->SetStringField(TEXT("name"), Prop->GetName());
+				ParamObj->SetStringField(TEXT("type"), Prop->GetCPPType());
+				ParamObj->SetBoolField(TEXT("is_output"), (Prop->PropertyFlags & CPF_OutParm) != 0);
+				ParamArr.Add(MakeShared<FJsonValueObject>(ParamObj));
+			}
+			EventObj->SetArrayField(TEXT("parameters"), ParamArr);
+
+			EventArr.Add(MakeShared<FJsonValueObject>(EventObj));
+		}
+	};
+
+	// Collect from parent class hierarchy
+	CollectFromClass(BP->ParentClass, TEXT("parent_class"));
+
+	// Collect from implemented interfaces
+	for (const FBPInterfaceDescription& IntDesc : BP->ImplementedInterfaces)
+	{
+		if (IntDesc.Interface)
+		{
+			CollectFromClass(IntDesc.Interface, FString::Printf(TEXT("interface:%s"), *IntDesc.Interface->GetName()));
+		}
+	}
+
+	OutResult = MakeShared<FJsonObject>();
+	OutResult->SetArrayField(TEXT("events"), EventArr);
+	OutResult->SetNumberField(TEXT("count"), EventArr.Num());
+
+	int32 ImplementedCount = 0;
+	for (const auto& Ev : EventArr)
+	{
+		if (Ev->AsObject()->GetBoolField(TEXT("is_implemented"))) ImplementedCount++;
+	}
+	OutResult->SetNumberField(TEXT("implemented_count"), ImplementedCount);
+	OutResult->SetNumberField(TEXT("unimplemented_count"), EventArr.Num() - ImplementedCount);
+
+	UE_LOG(LogUABlueprint, Log, TEXT("list_overridable_events: %s — %d total, %d implemented"),
+		*BP->GetName(), EventArr.Num(), ImplementedCount);
 	return true;
 }
