@@ -29,6 +29,7 @@ UE5 与 Unity 的渲染管线、Shader、材质系统技术笔记。
 | [UE5_Add_Custom_MeshDrawPass.md](./Rendering/UE5_Add_Custom_MeshDrawPass.md) | 搓手苍蝇知乎文：给 UE5 添加自定义 MeshDrawPass 完整代码流程 |
 | [UE5_Custom_ShadingModel.md](./Rendering/UE5_Custom_ShadingModel.md) | UE5.6 自定义 Shading Model 的 7 步流程 |
 | [Unity_PBR_Fur_Material.md](./Rendering/Unity_PBR_Fur_Material.md) | Unity ExtendStandard 皮毛材质 + 布料 BRDF 实现指南 |
+| [xbdev_Fur_Shell_Texturing_Classic.md](./Rendering/xbdev_Fur_Shell_Texturing_Classic.md) | **元老级教程**：DirectX Shell Texturing 毛发核心算法（所有 Shell Fur 方案的理论源头） |
 
 ---
 
